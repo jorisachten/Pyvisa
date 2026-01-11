@@ -27,6 +27,60 @@ class ScpiCommand:
     mode: str                 # "GET" or "SET"
     parameters_raw: str = ""  # original cell text (optional)
 
+@dataclass
+class ParamDef:
+    name: str
+    kind: str              # "free" | "options"
+    options: List[str]
+    format_spec: str = ""  # e.g. "V.3f" for free inputs
+
+
+def _apply_format_spec(value: str, fmt: str) -> str:
+    if not fmt:
+        return value
+    m = re.fullmatch(r"V\.(\d+)f", fmt.strip(), flags=re.IGNORECASE)
+    if not m:
+        return value
+    decimals = int(m.group(1))
+    try:
+        f = float(value)
+    except Exception:
+        return value
+    return f"{f:.{decimals}f}"
+
+
+def _first_placeholder_names(cmd_template: str) -> List[str]:
+    return [m.group(1).strip() for m in re.finditer(r"\{([^}]+)\}", cmd_template or "")]
+
+
+def parse_param_defs(parameters_raw: str, cmd_template: str) -> List[ParamDef]:
+    s = "" if parameters_raw is None else str(parameters_raw).strip()
+    if s == "" or s.lower() in {"nan", "none"}:
+        ph = _first_placeholder_names(cmd_template)
+        return [ParamDef(name=p, kind="free", options=[], format_spec="") for p in ph]
+
+    parts = [p.strip() for p in s.split("|")]
+    out: List[ParamDef] = []
+
+    for part in parts:
+        if not part:
+            continue
+
+        if ":" in part:
+            left, right = part.split(":", 1)
+            left = left.strip()
+            right = right.strip()
+
+            if ";" in right:
+                opts = [o.strip() for o in right.split(";") if o.strip() != ""]
+                out.append(ParamDef(name=left, kind="options", options=opts, format_spec=""))
+            else:
+                out.append(ParamDef(name=left, kind="free", options=[], format_spec=right))
+        else:
+            out.append(ParamDef(name=part, kind="free", options=[], format_spec=""))
+
+    return out
+
 
 def _find_col(df: pd.DataFrame, wanted: List[str]) -> Optional[str]:
     cols = {str(c).strip().casefold(): c for c in df.columns}
@@ -230,16 +284,21 @@ def api_commands_for_alias():
     cmds = SCPI_DEFS.get(model, [])
     payload_cmds = []
     for c in cmds:
-        ptype, opts, pname, fmt = _parse_parameter(c.parameters_raw, c.cmd)
+        param_defs = parse_param_defs(c.parameters_raw, c.cmd)
         payload_cmds.append({
             "name": c.name,
             "cmd": c.cmd,
             "mode": c.mode,
             "parameters_raw": c.parameters_raw,
-            "param_type": ptype,   # none | free | options
-            "param_name": pname,
-            "format_spec": fmt,
-            "options": opts,
+            "param_defs": [
+                {
+                    "name": d.name,
+                    "kind": d.kind,
+                    "options": d.options,
+                    "format_spec": d.format_spec,
+                }
+                for d in param_defs
+            ],
         })
 
     return jsonify({"ok": True, "model": model, "commands": payload_cmds})
@@ -250,7 +309,9 @@ def api_run():
     data = request.get_json(force=True)
     alias = (data.get("alias") or "").strip()
     cmd_name = (data.get("name") or "").strip()
-    value = str(data.get("value") or "").strip()
+
+    values = data.get("values")
+    single_value = str(data.get("value") or "").strip()
 
     if not alias or not cmd_name:
         return jsonify({"ok": False, "error": "Missing alias/name"}), 400
@@ -268,21 +329,41 @@ def api_run():
     if c is None:
         return jsonify({"ok": False, "error": f"Command '{cmd_name}' not found for model '{model}'"}), 404
 
-    ptype, _, _, fmt = _parse_parameter(c.parameters_raw, c.cmd)
+    param_defs = parse_param_defs(c.parameters_raw, c.cmd)
+
+    if values is None and single_value != "" and len(param_defs) == 1:
+        values = {param_defs[0].name: single_value}
+
+    if values is None:
+        values = {}
+    if not isinstance(values, dict):
+        return jsonify({"ok": False, "error": "values must be an object/dict"}), 400
 
     try:
         if c.mode == "GET":
             resp = mgr.query(alias, c.cmd)
             return jsonify({"ok": True, "mode": "GET", "cmd": c.cmd, "response": resp})
 
-        # SET
-        if ptype == "none":
-            cmd_to_send = c.cmd
-        else:
-            if value == "":
-                return jsonify({"ok": False, "error": "Missing value for SET command"}), 400
-            value2 = _apply_format_spec(value, fmt)
-            cmd_to_send = _format_set_command(c.cmd, value2)
+        cmd_to_send = c.cmd.strip()
+
+        if len(param_defs) == 0:
+            mgr.write(alias, cmd_to_send)
+            return jsonify({"ok": True, "mode": "SET", "cmd": cmd_to_send, "response": ""})
+
+        for d in param_defs:
+            if d.name not in values or str(values.get(d.name, "")).strip() == "":
+                return jsonify({"ok": False, "error": f"Missing value for {d.name}"}), 400
+
+            v = str(values[d.name]).strip()
+            if d.kind == "free":
+                v = _apply_format_spec(v, d.format_spec)
+
+            cmd_to_send = re.sub(r"\{" + re.escape(d.name) + r"\}", v, cmd_to_send)
+
+        if re.search(r"\{[^}]+\}", cmd_to_send):
+            if values:
+                first_v = str(next(iter(values.values()))).strip()
+                cmd_to_send = re.sub(r"\{[^}]+\}", first_v, cmd_to_send)
 
         mgr.write(alias, cmd_to_send)
         return jsonify({"ok": True, "mode": "SET", "cmd": cmd_to_send, "response": ""})

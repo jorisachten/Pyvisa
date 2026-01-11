@@ -113,3 +113,6 @@ th { background: #fbfbfd; position: sticky; top: 0; }
   font-size: 13px;
   box-sizing: border-box;
 }
+/* Multiple parameters per command */
+.paramWrap { display: flex; gap: 8px; align-items: center; }
+.paramMini { width: 110px; }

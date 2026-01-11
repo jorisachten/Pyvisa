@@ -232,37 +232,46 @@ async function loadCommandsIntoCell(alias, model, cell) {
     cmds.forEach(c => {
       const name = c.name;
       const mode = c.mode;
-      const paramType = c.param_type || "none";   // none | free | options
-      const options = c.options || [];
-      const paramName = c.param_name || "";
 
       const row = document.createElement("div");
       row.className = "cmdRow3";
 
-      // Col1 input
-      let inputEl = document.createElement("div");
-      inputEl.className = "cmdEmpty";
+      // Col1 input(s)
+      const paramDefs = c.param_defs || [];
+      const inputs = []; // {name, el}
 
-      let actualInput = null;
-      if (mode === "SET") {
-        if (paramType === "options" && options.length > 0) {
-          const sel = document.createElement("select");
-          sel.className = "cmdInput";
-          options.forEach(o => {
-            const opt = document.createElement("option");
-            opt.value = o;
-            opt.textContent = o;
-            sel.appendChild(opt);
-          });
-          actualInput = sel;
-          inputEl = sel;
-        } else if (paramType === "free") {
-          const inp = document.createElement("input");
-          inp.className = "cmdInput";
-          inp.placeholder = paramName ? `${paramName}…` : "value…";
-          actualInput = inp;
-          inputEl = inp;
-        }
+      let inputCell = document.createElement("div");
+      inputCell.className = "cmdEmpty";
+
+      if (mode === "SET" && paramDefs.length > 0) {
+        const wrap = document.createElement("div");
+        wrap.className = "paramWrap";
+
+        paramDefs.forEach(d => {
+          const kind = d.kind || "free";
+          const pname = d.name || "value";
+
+          if (kind === "options") {
+            const sel = document.createElement("select");
+            sel.className = "cmdInput paramMini";
+            (d.options || []).forEach(o => {
+              const opt = document.createElement("option");
+              opt.value = o;
+              opt.textContent = o;
+              sel.appendChild(opt);
+            });
+            inputs.push({ name: pname, el: sel });
+            wrap.appendChild(sel);
+          } else {
+            const inp = document.createElement("input");
+            inp.className = "cmdInput paramMini";
+            inp.placeholder = pname + "…";
+            inputs.push({ name: pname, el: inp });
+            wrap.appendChild(inp);
+          }
+        });
+
+        inputCell = wrap;
       }
 
       // Col2 button
@@ -270,7 +279,7 @@ async function loadCommandsIntoCell(alias, model, cell) {
       btn.className = "cmdBtn";
       btn.textContent = name;
 
-      // Col3 diag
+      // Col3 diagnostics
       const out = document.createElement("div");
       out.className = "cmdOut";
 
@@ -282,17 +291,18 @@ async function loadCommandsIntoCell(alias, model, cell) {
             appendHistory(`setup.query('${escapePy(alias)}','${escapePy(r.cmd)}')`);
             const diag = makeDiagText(r.cmd, r.response, false);
             out.textContent = diag;
-      out.title = diag;
             out.title = diag;
           } else {
-            const payload = (actualInput === null)
-              ? { alias, name }
-              : { alias, name, value: actualInput.value };
+            let payload = { alias, name };
+            if (inputs.length > 0) {
+              const values = {};
+              inputs.forEach(x => values[x.name] = (x.el.value ?? "").trim());
+              payload.values = values;
+            }
             const r = await postJSON("/api/run", payload);
             appendHistory(`setup.write('${escapePy(alias)}','${escapePy(r.cmd)}')`);
             const diag = makeDiagText(r.cmd, r.response, true);
             out.textContent = diag;
-      out.title = diag;
             out.title = diag;
           }
         } catch (e) {
@@ -301,7 +311,7 @@ async function loadCommandsIntoCell(alias, model, cell) {
         }
       });
 
-      row.appendChild(inputEl);
+      row.appendChild(inputCell);
       row.appendChild(btn);
       row.appendChild(out);
       table.appendChild(row);
