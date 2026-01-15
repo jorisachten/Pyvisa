@@ -34,11 +34,11 @@ class Instrument:
                 inst.parity = pyvisa.constants.Parity.none
                 inst.stop_bits = pyvisa.constants.StopBits.one
                 inst.write_termination = "\n"
-                inst.timeout = 100  # ms
+                inst.timeout = 500  # ms
                 #inst.read_termination = None  
                 
             elif self.dev_kind == DeviceKind.VISA:
-                inst.timeout = 100  # ms
+                inst.timeout = 500  # ms
                 
             else:
                 print("ERROR: UNKNOWN DEVICE KIND")
