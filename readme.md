@@ -272,3 +272,11 @@ This allows:
 
 If the Excel descriptor is correct, everything else just works.
 
+
+
+linux install:
+sudo apt update
+sudo apt install -y python3-pip python3-venv libusb-1.0-0
+python3 -m venv venv
+source venv/bin/activate
+pip install flask pandas openpyxl pyvisa pyvisa-py

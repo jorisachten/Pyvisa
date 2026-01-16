@@ -10,7 +10,7 @@ from flask import Flask, jsonify, render_template, request
 
 from universal_pyvisa import upyvisa
 
-EXCEL_PATH = "SCIPY_DEF.xlsx"
+EXCEL_PATH = "SCPI_DEF.xlsx"
 
 app = Flask(__name__)
 
