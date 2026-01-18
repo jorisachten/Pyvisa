@@ -25,35 +25,45 @@ class Instrument:
         self.serial = serial
         self.alias = None
 
-    def query(self,command):
+    def query(self, command: str) -> str:
         rm = pyvisa.ResourceManager()
+
         with rm.open_resource(self.visa_name) as inst:
+            # Default terminations/timeouts (safe for VISA instruments)
+            inst.read_termination = None
+            inst.write_termination = "\n"
+            inst.timeout = 20000  # ms
+
+            # Configure depending on device kind
             if self.dev_kind == DeviceKind.SERIAL_115200_LF:
                 inst.baud_rate = 115200
                 inst.data_bits = 8
                 inst.parity = pyvisa.constants.Parity.none
                 inst.stop_bits = pyvisa.constants.StopBits.one
                 inst.write_termination = "\n"
-                inst.timeout = 500  # ms
-                #inst.read_termination = None  
-                
+                inst.read_termination = None
+                inst.timeout = 20000  # ms
+
             elif self.dev_kind == DeviceKind.VISA:
-                inst.timeout = 500  # ms
-                
+                # Typical VISA device
+                inst.timeout = 20000  # ms
+
             else:
                 print("ERROR: UNKNOWN DEVICE KIND")
-                return ''
+                return b""
 
-            
+            # Perform query
             inst.write(command)
             try:
                 response = inst.read()
             except pyvisa.errors.VisaIOError as e:
                 if e.error_code == pyvisa.constants.StatusCode.error_timeout:
-                    response = ''      # no response is OK
+                    response = b""  # no response is OK
                 else:
                     raise
+
             return response
+
     
                 
     def write(self, command):
@@ -80,6 +90,49 @@ class Instrument:
                 if e.error_code == pyvisa.constants.StatusCode.error_timeout:
                     return
                 raise
+
+    def query_raw(self, command: str) -> bytes:
+        rm = pyvisa.ResourceManager()
+
+        with rm.open_resource(self.visa_name) as inst:
+            # Default terminations/timeouts (safe for VISA instruments)
+            inst.read_termination = None
+            inst.write_termination = "\n"
+            inst.timeout = 20000  # ms
+
+            # Configure depending on device kind
+            if self.dev_kind == DeviceKind.SERIAL_115200_LF:
+                inst.baud_rate = 115200
+                inst.data_bits = 8
+                inst.parity = pyvisa.constants.Parity.none
+                inst.stop_bits = pyvisa.constants.StopBits.one
+                inst.write_termination = "\n"
+                inst.read_termination = None
+                inst.timeout = 20000  # ms
+
+            elif self.dev_kind == DeviceKind.VISA:
+                # Typical VISA device
+                inst.timeout = 20000  # ms
+
+            else:
+                print("ERROR: UNKNOWN DEVICE KIND")
+                return b""
+
+            # Perform query
+            inst.write(command)
+            try:
+                response = inst.read_raw()
+            except pyvisa.errors.VisaIOError as e:
+                if e.error_code == pyvisa.constants.StatusCode.error_timeout:
+                    response = b""  # no response is OK
+                else:
+                    raise
+
+            return response
+
+
+
+                
 
     def __str__(self):
         return (
@@ -182,3 +235,13 @@ class upyvisa:
                 instrument.write(cmd)
                 return
         print(f"Alias not found: {alias}")
+
+
+    def query_binary(self, alias, cmd):
+            for instrument in self.instrument_collection:
+                if instrument.alias != None:
+                    if instrument.alias.strip().casefold() == alias.strip().casefold():
+                       return instrument.query_raw(cmd)
+
+
+

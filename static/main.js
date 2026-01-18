@@ -32,6 +32,30 @@ function escapePy(s) {
   return String(s ?? "").replaceAll("\\", "\\\\").replaceAll("'", "\\'");
 }
 
+function ensureImageImports() {
+  if (!historyBox) return;
+  const cur = historyBox.value || "";
+  const lines = cur ? cur.split(/\r?\n/) : [];
+
+  const hasBytesIO = /^\s*from\s+io\s+import\s+BytesIO\s*$/m.test(cur);
+  const hasPIL = /^\s*from\s+PIL\s+import\s+Image\s*$/m.test(cur);
+
+  // Insert imports after existing import lines (similar to ensureTimeImported)
+  let insertAt = 0;
+  while (insertAt < lines.length && /^\s*(from\s+\S+\s+import\s+\S+|import\s+\S+)/.test(lines[insertAt])) {
+    insertAt++;
+  }
+
+  const toAdd = [];
+  if (!hasBytesIO) toAdd.push("from io import BytesIO");
+  if (!hasPIL) toAdd.push("from PIL import Image");
+
+  if (toAdd.length) {
+    lines.splice(insertAt, 0, ...toAdd);
+    setHistory(lines.join("\n").replace(/^\n+/, ""));
+  }
+}
+
 function ensureTimeImported() {
   if (!historyBox) return;
   const cur = historyBox.value || "";
@@ -93,6 +117,28 @@ async function copyHistoryToClipboard() {
   document.body.removeChild(tmp);
 }
 
+
+
+function showImageModal(dataUrl) {
+  const imgModal = document.getElementById("imgModal");
+  const imgModalImg = document.getElementById("imgModalImg");
+  if (!imgModal || !imgModalImg) return;
+  imgModalImg.src = dataUrl;
+  imgModal.classList.remove("modalHidden");
+  imgModal.classList.add("modalShown");
+}
+function hideImageModal() {
+  const imgModal = document.getElementById("imgModal");
+  if (!imgModal) return;
+  imgModal.classList.add("modalHidden");
+  imgModal.classList.remove("modalShown");
+}
+document.addEventListener("DOMContentLoaded", () => {
+  const imgModalClose = document.getElementById("imgModalClose");
+  const imgModalBackdrop = document.getElementById("imgModalBackdrop");
+  if (imgModalClose) imgModalClose.addEventListener("click", hideImageModal);
+  if (imgModalBackdrop) imgModalBackdrop.addEventListener("click", hideImageModal);
+});
 
 const instTbody = document.querySelector("#instTable tbody");
 
@@ -211,6 +257,26 @@ async function loadCommandsIntoCell(alias, model, cell) {
       btn.addEventListener("click", async () => {
         out.textContent = "";
         try {
+
+          if (c.is_image) {
+            const r = await postJSON("/api/screenshot", { alias, cmd: c.cmd });
+            ensureImageImports();
+            appendHistory("# --- screenshot ---");
+            appendHistory(`raw = setup.query_binary('${escapePy(alias)}','${escapePy(r.cmd)}')`);
+            appendHistory("if raw.startswith(b'#'):");
+            appendHistory("    n = int(raw[1:2])");
+            appendHistory("    size = int(raw[2:2+n])");
+            appendHistory("    raw = raw[2+n : 2+n+size]");
+            appendHistory("img = Image.open(BytesIO(raw))");
+            appendHistory("img");
+            const url = `data:${r.mime};base64,${r.b64}`;
+            showImageModal(url);
+            const diag = `${r.cmd} --> [image]`;
+            out.textContent = diag;
+            out.title = diag;
+            return;
+          }
+
           const cmd = (inp.value || "").trim();
           const r = await postJSON("/api/custom", { alias, cmd });
           const diag = makeDiagText(r.cmd, r.response, true);
@@ -237,7 +303,8 @@ async function loadCommandsIntoCell(alias, model, cell) {
       row.className = "cmdRow3";
 
       // Col1 input(s)
-      const paramDefs = c.param_defs || [];
+      let paramDefs = c.param_defs || [];
+      if (c.is_image) paramDefs = [];
       const inputs = []; // {name, el}
 
       let inputCell = document.createElement("div");
@@ -286,6 +353,18 @@ async function loadCommandsIntoCell(alias, model, cell) {
       btn.addEventListener("click", async () => {
         out.textContent = "";
         try {
+
+          if (c.is_image) {
+            const r = await postJSON("/api/screenshot", { alias, cmd: c.cmd });
+            appendHistory(`setup.query_binary('${escapePy(alias)}','${escapePy(r.cmd)}')  # screenshot (binary)`);
+            const url = `data:${r.mime};base64,${r.b64}`;
+            showImageModal(url);
+            const diag = `${r.cmd} --> [image]`;
+            out.textContent = diag;
+            out.title = diag;
+            return;
+          }
+
           if (mode === "GET") {
             let payload = { alias, name };
             if (inputs.length > 0) {

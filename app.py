@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import re
 import threading
+import base64
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
+import pyvisa
 from flask import Flask, jsonify, render_template, request
 
 from universal_pyvisa import upyvisa
@@ -55,6 +57,8 @@ def _first_placeholder_names(cmd_template: str) -> List[str]:
 
 def parse_param_defs(parameters_raw: str, cmd_template: str) -> List[ParamDef]:
     s = "" if parameters_raw is None else str(parameters_raw).strip()
+    if s.upper() == "__IMAGE__":
+        return []
     if s == "" or s.lower() in {"nan", "none"}:
         ph = _first_placeholder_names(cmd_template)
         return [ParamDef(name=p, kind="free", options=[], format_spec="") for p in ph]
@@ -80,6 +84,57 @@ def parse_param_defs(parameters_raw: str, cmd_template: str) -> List[ParamDef]:
             out.append(ParamDef(name=part, kind="free", options=[], format_spec=""))
 
     return out
+
+
+def _read_full_raw_block(resource) -> bytes:
+    """Read a full IEEE488.2 definite-length block from a VISA resource."""
+    raw = resource.read_raw()
+    if not raw:
+        return raw
+
+    if raw.startswith(b"#") and len(raw) >= 2:
+        try:
+            n = int(raw[1:2].decode("ascii"))
+        except Exception:
+            return raw
+        if n <= 0:
+            return raw
+
+        while len(raw) < 2 + n:
+            raw += resource.read_bytes((2 + n) - len(raw))
+
+        try:
+            size = int(raw[2:2+n].decode("ascii"))
+        except Exception:
+            return raw
+
+        total_len = 2 + n + size
+        while len(raw) < total_len:
+            raw += resource.read_bytes(total_len - len(raw))
+
+    return raw
+
+
+def parse_ieee4882_block(raw: bytes) -> bytes:
+    """Parse IEEE488.2 definite-length binary block and return payload bytes."""
+    if not raw:
+        raise ValueError("Empty response")
+    if raw[0:1] != b"#":
+        return raw
+    if len(raw) < 2:
+        raise ValueError("Invalid block header")
+    n = int(raw[1:2].decode("ascii"))
+    if n <= 0:
+        raise ValueError("Invalid block length digits")
+    if len(raw) < 2 + n:
+        raise ValueError("Incomplete block header")
+    size = int(raw[2:2+n].decode("ascii"))
+    start = 2 + n
+    end = start + size
+    if len(raw) < end:
+        raise ValueError(f"Incomplete block data: expected {size}, got {len(raw) - start}")
+    return raw[start:end]
+
 
 
 def _find_col(df: pd.DataFrame, wanted: List[str]) -> Optional[str]:
@@ -290,6 +345,7 @@ def api_commands_for_alias():
             "cmd": c.cmd,
             "mode": c.mode,
             "parameters_raw": c.parameters_raw,
+            "is_image": (str(c.parameters_raw).strip().upper() == "__IMAGE__"),
             "param_defs": [
                 {
                     "name": d.name,
@@ -405,6 +461,47 @@ def api_custom():
             return jsonify({"ok": True, "cmd": cmd, "response": resp})
         mgr.write(alias, cmd)
         return jsonify({"ok": True, "cmd": cmd, "response": ""})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
+
+
+
+@app.route("/api/screenshot", methods=["POST"])
+def api_screenshot():
+    data = request.get_json(force=True)
+    alias = (data.get("alias") or "").strip()
+    cmd = (data.get("cmd") or "SCDP").strip()
+
+    if not alias:
+        return jsonify({"ok": False, "error": "Missing alias"}), 400
+
+    with _lock:
+        mgr = _get_mgr()
+        inst = next((i for i in mgr.instrument_collection if (i.alias or "").casefold() == alias.casefold()), None)
+
+    if inst is None:
+        return jsonify({"ok": False, "error": "Alias not found"}), 404
+
+    try:
+        rm = pyvisa.ResourceManager()
+        scope = rm.open_resource(inst.visa_name)
+
+        scope.timeout = 20000
+        scope.read_termination = None
+        scope.write_termination = "\n"
+
+        scope.write(cmd)
+        raw = _read_full_raw_block(scope)
+        payload = parse_ieee4882_block(raw)
+
+        mime = "application/octet-stream"
+        if payload.startswith(b"\x89PNG\r\n\x1a\n"):
+            mime = "image/png"
+        elif payload.startswith(b"\xff\xd8\xff"):
+            mime = "image/jpeg"
+
+        b64 = base64.b64encode(payload).decode("ascii")
+        return jsonify({"ok": True, "cmd": cmd, "mime": mime, "b64": b64})
     except Exception as e:
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
 

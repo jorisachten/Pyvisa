@@ -48,5 +48,17 @@
   </div>
 
   <script src="{{ url_for('static', filename='main.js') }}"></script>
+
+  <div id="imgModal" class="modalHidden">
+    <div class="modalBackdrop" id="imgModalBackdrop"></div>
+    <div class="modalCard">
+      <div class="modalHead">
+        <div class="modalTitle">Screenshot</div>
+        <button id="imgModalClose" class="secondary">Close</button>
+      </div>
+      <img id="imgModalImg" class="modalImg" alt="Scope screenshot" />
+    </div>
+  </div>
+
 </body>
 </html>

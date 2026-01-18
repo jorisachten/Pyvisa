@@ -116,3 +116,33 @@ th { background: #fbfbfd; position: sticky; top: 0; }
 /* Multiple parameters per command */
 .paramWrap { display: flex; gap: 8px; align-items: center; }
 .paramMini { width: 110px; }
+/* Screenshot modal */
+.modalHidden { display: none; }
+.modalShown { display: block; position: fixed; inset: 0; z-index: 1000; }
+.modalBackdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.55); }
+.modalCard {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(1100px, 92vw);
+  max-height: 90vh;
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 16px 48px rgba(0,0,0,.25);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.modalHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.modalTitle { font-weight: 700; }
+.modalImg {
+  width: 100%;
+  height: auto;
+  max-height: calc(90vh - 70px);
+  object-fit: contain;
+  border-radius: 12px;
+  border: 1px solid #eef0f4;
+  background: #fbfbfd;
+}
